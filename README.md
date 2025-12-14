@@ -43,7 +43,7 @@ This repository also includes two additional selection approaches:
 
 ## Testing CAPS–TPOT
 
-An example run using the **Dionis** dataset is included in this repository.
+An example run using the **Dionis** dataset is included in this repository called ***tpot_caps_integration_test.py***.
 
 All datasets used in our experiments can be found here:  
 *https://automl.chalearn.org/data*.
