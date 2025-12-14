@@ -1,6 +1,13 @@
 # -*- coding: utf-8 -*-
 
-"""This file is part of the TPOT library.
+"""This file is modified to showcase the integration between CAPS and TPOT
+
+As CAPS operates as middleware between the generation and the execution of pipelines
+we opt to add the middleware after the generation in evaluate_individuals functions of TPOT.
+
+All modified parts are marked with ##CAPS##
+
+This file is part of the TPOT library.
 
 TPOT was primarily developed at the University of Pennsylvania by:
     - Randal S. Olson (rso@randalolson.com)
@@ -26,6 +33,7 @@ License along with TPOT. If not, see <http://www.gnu.org/licenses/>.
 from __future__ import print_function
 import random
 import inspect
+import time
 import warnings
 import sys
 
@@ -55,10 +63,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.model_selection._split import check_cv
 from sklearn.utils.metaestimators import available_if
 
-from joblib import Parallel, delayed, Memory
+from joblib import  Memory
 
 from update_checker import update_check
 
+from caps.base import CAPS_middleware, CAPS_update
 from ._version import __version__
 from .operator_utils import TPOTOperatorClassFactory, Operator, ARGType
 from .export_utils import (
@@ -88,6 +97,7 @@ from .gp_deap import (
     _wrapped_cross_val_score,
     cxOnePoint,
 )
+import logging
 
 try:
     from imblearn.pipeline import make_pipeline as make_imblearn_pipeline
@@ -106,6 +116,11 @@ class TPOTBase(BaseEstimator):
 
     def __init__(
         self,
+        mode="CAPS",  #CAPS specific parameter
+        sel_algo="caps-greedy", #CAPS specific parameter
+        lamda=0.5, #CAPS specific parameter
+        selection = 50, #CAPS specific parameter
+        data_id="jannis", #CAPS specific parameter
         generations=100,
         population_size=100,
         offspring_size=None,
@@ -287,7 +302,11 @@ class TPOTBase(BaseEstimator):
             raise RuntimeError(
                 "Do not instantiate the TPOTBase class directly; use TPOTRegressor or TPOTClassifier instead."
             )
-
+        self.mode = mode  # CAPS specific parameter
+        self.sel_algo = sel_algo  # CAPS specific parameter
+        self.lamda = lamda# CAPS specific parameter
+        self.selection = selection  # CAPS specific parameter
+        self.data_id = data_id  # CAPS specific parameter
         self.population_size = population_size
         self.offspring_size = offspring_size
         self.generations = generations
@@ -1472,6 +1491,8 @@ class TPOTBase(BaseEstimator):
         stats["internal_cv_score"] = cv_score
         return stats
 
+
+
     def _evaluate_individuals(
         self, population, features, target, sample_weight=None, groups=None
     ):
@@ -1499,7 +1520,13 @@ class TPOTBase(BaseEstimator):
 
         """
         # Evaluate the individuals with an invalid fitness
+
+
+
         individuals = [ind for ind in population if not ind.fitness.valid]
+        log_file_name = self.data_id + "_" + str(self.random_state) + '_' + str(self.sel_algo) + '_' + str(
+            self.selection) + '_' + str(self.lamda) + '_' + str(self.population_size) + '.log'
+        logging.basicConfig(filename=log_file_name, level=logging.INFO)
         num_population = len(population)
         # update pbar for valid individuals (with fitness values)
         if self.verbosity > 0:
@@ -1511,7 +1538,36 @@ class TPOTBase(BaseEstimator):
             sklearn_pipeline_list,
             stats_dicts,
         ) = self._preprocess_individuals(individuals)
+        # CAPS START get pipelines and the predecessor score for each one of them
+        if self.mode == "CAPS":
+            print(f"\n *** Using CAPS is selecting {self.selection} out of {self.population_size} candidate pipelines using the {self.sel_algo} algorithm.***\n")
+            predecessor_scores = []
+            for pipeline, stats in stats_dicts.items():
+                # logging.info(f"{pipeline}:")
+                predecessor = stats['predecessor']
+                previous_pipelines = self.evaluated_individuals_.keys()
+                if str(predecessor[0]) in self.evaluated_individuals_.keys():
+                    predecessor_score = self.evaluated_individuals_[str(predecessor[0])]["internal_cv_score"]
+                    # predecessor_score = 1
+                elif 'ROOT' in str(predecessor[0]):
+                    predecessor_score = 1
+                else:
+                    predecessor_score = 1
+                predecessor_scores.append(predecessor_score)
 
+            timeout = max(int(self.max_eval_time_mins * 60), 1)
+            selected_indices_set, sklearn_pipeline_list = CAPS_middleware(sel_algo=self.sel_algo,
+                                                                          lamda= self.lamda,selection=
+                                                                          self.selection,
+                                                                          data_id= self.data_id,
+                                                                          random_state= self.random_state,
+                                                                          N =self.population_size,
+                                                                          timeout=timeout,
+                                                                          sklearn_pipeline_list= sklearn_pipeline_list,
+                                                                          predecessor_scores=predecessor_scores)
+
+
+        # CAPS END
         cv = check_cv(self.cv, target, classifier=self.classification)
 
         # Make the partial function that will be called below
@@ -1529,72 +1585,39 @@ class TPOTBase(BaseEstimator):
 
         result_score_list = []
 
-        try:
-            # check time limit before pipeline evaluation
-            self._stop_by_max_time_mins()
-            # Don't use parallelization if n_jobs==1
-            if self._n_jobs == 1 and not self.use_dask:
-                for sklearn_pipeline in sklearn_pipeline_list:
-                    self._stop_by_max_time_mins()
-                    val = partial_wrapped_cross_val_score(
-                        sklearn_pipeline=sklearn_pipeline
-                    )
-                    result_score_list = self._update_val(val, result_score_list)
-            else:
-                # chunk size for pbar update
-                if self.use_dask:
-                    # chunk size is min of _lambda and n_jobs * 10
-                    chunk_size = min(self._lambda, self._n_jobs * 10)
-                else:
-                    # chunk size is min of cpu_count * 2 and n_jobs * 4
-                    chunk_size = min(cpu_count() * 2, self._n_jobs * 4)
-                for chunk_idx in range(0, len(sklearn_pipeline_list), chunk_size):
-                    self._stop_by_max_time_mins()
-                    if self.use_dask:
-                        import dask
 
-                        tmp_result_scores = [
-                            partial_wrapped_cross_val_score(
-                                sklearn_pipeline=sklearn_pipeline
-                            )
-                            for sklearn_pipeline in sklearn_pipeline_list[
-                                chunk_idx : chunk_idx + chunk_size
-                            ]
-                        ]
-
-                        
-                        with warnings.catch_warnings():
-                            warnings.simplefilter("ignore")
-                            tmp_result_scores = list(dask.compute(*tmp_result_scores, num_workers=self.n_jobs))
-
-                    else:
-
-                        parallel = Parallel(
-                            n_jobs=self._n_jobs, verbose=0, pre_dispatch="2*n_jobs"
-                        )
-                        tmp_result_scores = parallel(
-                            delayed(partial_wrapped_cross_val_score)(
-                                sklearn_pipeline=sklearn_pipeline
-                            )
-                            for sklearn_pipeline in sklearn_pipeline_list[
-                                chunk_idx : chunk_idx + chunk_size
-                            ]
-                        )
-                    # update pbar
-                    for val in tmp_result_scores:
-                        result_score_list = self._update_val(val, result_score_list)
-
-        except (KeyboardInterrupt, SystemExit, StopIteration) as e:
-            if self.verbosity > 0:
-                self._pbar.write("", file=self.log_file_)
-                self._pbar.write(
-                    "{}\nTPOT closed during evaluation in one generation.\n"
-                    "WARNING: TPOT may not provide a good pipeline if TPOT is stopped/interrupted in a early generation.".format(
-                        e
-                    ),
-                    file=self.log_file_,
+        # check time limit before pipeline evaluation
+        self._stop_by_max_time_mins()
+        pipeline_scores =[]
+        for idx, sklearn_pipeline in enumerate(sklearn_pipeline_list):
+            start_time = time.time()  # Start timing
+            val = partial_wrapped_cross_val_score(
+                    sklearn_pipeline=sklearn_pipeline
                 )
+            fitting_time = time.time() - start_time  # End timing
+            pipeline_scores.append({
+                "pipeline": sklearn_pipeline,
+                "score": val,
+                "fitting_time": fitting_time
+            })
+            print(f"Pipeline: {sklearn_pipeline}, Fitting time: {fitting_time} seconds, Score: {val}")
+            logging.info(f"Pipeline: {sklearn_pipeline}, Fitting time: {fitting_time} seconds, Score: {val}")
+            result_score_list = self._update_val(val, result_score_list)
 
+        if self.mode == "CAPS":
+            CAPS_update(sel_algo=self.sel_algo,
+                            lamda=self.lamda, selection=
+                            self.selection,
+                            data_id=self.data_id,
+                            random_state=self.random_state,
+                            N=self.population_size,
+                            pipeline_scores=pipeline_scores
+                            )
+            eval_individuals_str = [val for idx, val in enumerate(eval_individuals_str) if idx in selected_indices_set]
+            self._update_evaluated_individuals_(
+                result_score_list, eval_individuals_str, operator_counts, stats_dicts
+            )
+        else:
             # number of individuals already evaluated in this generation
             num_eval_ind = len(result_score_list)
             self._update_evaluated_individuals_(
@@ -1603,29 +1626,20 @@ class TPOTBase(BaseEstimator):
                 operator_counts,
                 stats_dicts,
             )
-            for ind in individuals[:num_eval_ind]:
-                ind_str = str(ind)
+
+        for ind in individuals:
+            ind_str = str(ind)
+            if ind_str in self.evaluated_individuals_:
                 ind.fitness.values = (
                     self.evaluated_individuals_[ind_str]["operator_count"],
                     self.evaluated_individuals_[ind_str]["internal_cv_score"],
                 )
+            else:
+                logging.warning(f"Individual {ind_str} was skipped from evaluation")
+                ind.fitness.values = (0, 0)  # Or any other default value
 
-            self._pareto_front.update(individuals[:num_eval_ind])
-
-            self._pop = population
-            raise KeyboardInterrupt
-
-        self._update_evaluated_individuals_(
-            result_score_list, eval_individuals_str, operator_counts, stats_dicts
-        )
-
-        for ind in individuals:
-            ind_str = str(ind)
-            ind.fitness.values = (
-                self.evaluated_individuals_[ind_str]["operator_count"],
-                self.evaluated_individuals_[ind_str]["internal_cv_score"],
-            )
-        individuals = [ind for ind in population if not ind.fitness.valid]
+        population = [ind for ind in population if str(ind) in eval_individuals_str]
+        self._pop = population
         self._pareto_front.update(population)
 
         return population
