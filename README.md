@@ -96,4 +96,8 @@ if __name__ == "__main__":
 
     tpot.fit(X, y)
 ```
+### Contact
 
+For any questions don't hesitate to ask:
+
+Antonios Kontaxakis, antonios.kontaxakis-ATNOSPAM-ulb.be
