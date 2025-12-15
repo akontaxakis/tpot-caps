@@ -4,7 +4,7 @@ if __name__ == '__main__':
     from tpot import TPOTClassifier
 
     # CAPS parameters
-    data_id = "dionis"
+    data_id = "jannis"
     mode = "CAPS"  # CAPS specific parameter
     sel_algo = "caps_greedy"  # CAPS specific parameter
     lamda = 0.5  # CAPS specific parameter
