@@ -6,7 +6,7 @@ This repository contains the integration of **CAPS** with **TPOT**.
 This if forked repository from EpistasisLab/tpot
 
 The main CAPS repository, including instructions on how to integrate CAPS with other AutoML tools, can be found here:  
-*<insert link>*.
+*https://github.com/akontaxakis/CAPS.git*.
 
 ---
 
@@ -59,7 +59,7 @@ mode = "CAPS"                        # CAPS-specific parameter
 sel_algo = "caps-greedy"           # options: caps-greedy, caps-beam_search, flaML-like, ratio
 lamda = 0.5                      # used with caps-greedy and caps-beam_search
 selection = 100              # CAPS-specific parameter
-data_id = "dionis"                           # unique identifier for history graph + logging files
+data_id = "jannis"                           # unique identifier for history graph + logging files
 ```
 
 ## Minimal example
@@ -69,7 +69,7 @@ from AutoML_data_manager.data_manager import DataManager
 from tpot import TPOTClassifier
 
 if __name__ == "__main__":
-    data_id = "dionis"
+    data_id = "jannis"
 
     dm = DataManager(
         data_id,
