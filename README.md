@@ -33,7 +33,7 @@ Its purpose is to select which pipelines should be evaluated by using a **weight
 This repository also includes two additional selection approaches:
 
 - **flaml-like**  
-  Inspired by FLAML; uses *observed* performance and cost from previous iterations (no predicted values).
+  Inspired by FLAML; uses *observed* performance and cost from previous iterations (no predicted values) to compute ECI (Expected Cost for Improvement).
 
 - **ratio**  
   Uses CAPS’ predicted values; selects based on  
